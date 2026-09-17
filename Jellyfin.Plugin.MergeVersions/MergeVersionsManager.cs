@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,7 +10,6 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using Microsoft.AspNetCore.Mvc;
@@ -251,7 +249,8 @@ namespace Jellyfin.Plugin.MergeVersions
 
         private async Task MergeVersions(List<Guid> ids)
         {
-            var items = ids.Select(i => _libraryManager.GetItemById<BaseItem>(i, null))
+            var items = ids
+                .Select(i => _libraryManager.GetItemById<BaseItem>(i, null))
                 .OfType<Video>()
                 .OrderBy(i => i.Id)
                 .ToList();
@@ -264,14 +263,7 @@ namespace Jellyfin.Plugin.MergeVersions
             }
 
             var primaryVersion = items
-                .OrderBy(i =>
-                {
-                    if (i.Video3DFormat.HasValue || i.VideoType != VideoType.VideoFile)
-                    {
-                        return 1;
-                    }
-                    return 0;
-                })
+                .OrderBy(i => i.Video3DFormat.HasValue || i.VideoType != VideoType.VideoFile ? 1 : 0)
                 .ThenByDescending(i => i.GetDefaultVideoStream()?.Width ?? 0)
                 .ThenByDescending(i => i.GetDefaultVideoStream()?.BitRate ?? 0)
                 .First();
@@ -280,7 +272,7 @@ namespace Jellyfin.Plugin.MergeVersions
             //_logger.LogInformation($"primaryVersion.Path: {primaryVersion.Path}");
 
             var alternateVersionsOfPrimary = primaryVersion
-                .LinkedAlternateVersions.Where(l => items.Any(i => i.Path == l.Path))
+                .LinkedAlternateVersions
                 .ToList();
             //_logger.LogInformation($"Got previous linked alternateVersionsOfPrimary: {string.Join(", ", alternateVersionsOfPrimary.Select(l => ((Guid)l.ItemId).ToString("N", CultureInfo.InvariantCulture)))}");
 
@@ -293,39 +285,45 @@ namespace Jellyfin.Plugin.MergeVersions
 
                 //_logger.LogInformation($"item.PrimaryVersionId: {item.PrimaryVersionId} vs. primaryVersion.Id: {primaryVersion.Id.ToString("N", CultureInfo.InvariantCulture)}");
                 // Only update if the PrimaryVersionId has been changed
-                if (!string.Equals(item.PrimaryVersionId, primaryVersion.Id.ToString("N", CultureInfo.InvariantCulture)))
+                if (item.PrimaryVersionId != primaryVersion.Id)
                 {
-                    item.SetPrimaryVersionId(primaryVersion.Id.ToString("N", CultureInfo.InvariantCulture));
+                    item.SetPrimaryVersionId(primaryVersion.Id);
+                    item.OwnerId = primaryVersion.Id;
+                    PreserveAlternateVersionLinks(item);
+                    
                     await item.UpdateToRepositoryAsync(
                         ItemUpdateType.MetadataEdit,
                         CancellationToken.None
                     )
                     .ConfigureAwait(false);
+
+                    await _libraryManager.RerouteLinkedChildReferencesAsync(
+                        item.Id, primaryVersion.Id
+                    )
+                    .ConfigureAwait(false);
                 }
 
                 if (
-                    !alternateVersionsOfPrimary.Any(i =>
-                        string.Equals(i.Path, item.Path, StringComparison.OrdinalIgnoreCase)
+                    !alternateVersionsOfPrimary.Any(i => 
+                        i.ItemId.HasValue && i.ItemId.Value.Equals(item.Id))
                     )
-                )
                 {
                     alternateVersionsOfPrimary.Add(
-                        new LinkedChild { Path = item.Path, ItemId = item.Id }
+                        new LinkedChild { ItemId = item.Id, Type = LinkedChildType.LinkedAlternateVersion }
                     );
+
                 }
                 //_logger.LogInformation($"alternateVersionsOfPrimary: {string.Join(", ", alternateVersionsOfPrimary.Select(l => ((Guid)l.ItemId).ToString("N", CultureInfo.InvariantCulture)))}");
 
                 foreach (var linkedItem in item.LinkedAlternateVersions)
                 {
                     if (
-                        !alternateVersionsOfPrimary.Any(i =>
-                            string.Equals(
-                                i.Path,
-                                linkedItem.Path,
-                                StringComparison.OrdinalIgnoreCase
+                        linkedItem.ItemId.HasValue && 
+                        !alternateVersionsOfPrimary.Any(i => 
+                            i.ItemId.HasValue && 
+                            i.ItemId.Value.Equals(linkedItem.ItemId.Value)
                             )
                         )
-                    )
                     {
                         alternateVersionsOfPrimary.Add(linkedItem);
                     }
@@ -338,7 +336,8 @@ namespace Jellyfin.Plugin.MergeVersions
                     if (!originalItem.LinkedAlternateVersions.SequenceEqual(item.LinkedAlternateVersions))
                     {
                         // Clear LinkedAlternateVersions if there were changes
-                        item.LinkedAlternateVersions = [];
+                        item.LocalAlternateVersions = Array.Empty<string>();
+                        item.LinkedAlternateVersions = Array.Empty<LinkedChild>();
                         await item.UpdateToRepositoryAsync(
                             ItemUpdateType.MetadataEdit,
                             CancellationToken.None
@@ -352,8 +351,24 @@ namespace Jellyfin.Plugin.MergeVersions
             // Update primary version's LinkedAlternateVersions only if there are changes
             if (!primaryVersion.LinkedAlternateVersions.SequenceEqual(alternateVersionsOfPrimary))
             {
+                primaryVersion.LocalAlternateVersions = Array.Empty<string>();
                 primaryVersion.LinkedAlternateVersions = alternateVersionsOfPrimary.ToArray();
-                await primaryVersion.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None).ConfigureAwait(false);
+                primaryVersion.SetPrimaryVersionId(null);
+                primaryVersion.OwnerId = Guid.Empty;
+                await primaryVersion.UpdateToRepositoryAsync(
+                    ItemUpdateType.MetadataEdit,
+                    CancellationToken.None
+                )
+                .ConfigureAwait(false);
+
+                foreach (var alternate in alternateVersionsOfPrimary)
+                {
+                    _libraryManager.UpsertLinkedChild(
+                        primaryVersion.Id,
+                        alternate.ItemId.Value,
+                        LinkedChildType.LinkedAlternateVersion
+                    );
+                }
             }
         }
 
@@ -365,9 +380,9 @@ namespace Jellyfin.Plugin.MergeVersions
                 return;
             }
 
-            if (item.LinkedAlternateVersions.Length == 0 && item.PrimaryVersionId != null)
+            if (item.LinkedAlternateVersions.Length == 0 && item.PrimaryVersionId.HasValue)
             {
-                item = _libraryManager.GetItemById<Video>(Guid.Parse(item.PrimaryVersionId));
+                item = _libraryManager.GetItemById<Video>(item.PrimaryVersionId.Value);
             }
 
             if (item is null)
@@ -375,22 +390,90 @@ namespace Jellyfin.Plugin.MergeVersions
                 return;
             }
 
-            foreach (var link in item.GetLinkedAlternateVersions())
-            {
-                link.SetPrimaryVersionId(null);
-                link.LinkedAlternateVersions = [];
+            var alternateVersions = GetAllAlternateVersions([item])
+                .Where(i => !i.Id.Equals(item.Id))
+                .ToList();
 
-                await link.UpdateToRepositoryAsync(
+            foreach (var alternate in alternateVersions)
+            {
+                alternate.SetPrimaryVersionId(null);
+                alternate.OwnerId = Guid.Empty;
+                PreserveAlternateVersionLinks(alternate);
+
+                await alternate.UpdateToRepositoryAsync(
                         ItemUpdateType.MetadataEdit,
                         CancellationToken.None
                     )
                     .ConfigureAwait(false);
             }
 
-            item.LinkedAlternateVersions = [];
-            item.SetPrimaryVersionId(null);
-            await item.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, CancellationToken.None)
+            foreach (var alternate in alternateVersions)
+            {
+                alternate.LocalAlternateVersions = Array.Empty<string>();
+                alternate.LinkedAlternateVersions = Array.Empty<LinkedChild>();
+                await alternate.UpdateToRepositoryAsync(
+                        ItemUpdateType.MetadataEdit,
+                        CancellationToken.None
+                    )
                 .ConfigureAwait(false);
+                
+            }
+
+            item.LocalAlternateVersions = Array.Empty<string>();
+            item.LinkedAlternateVersions = Array.Empty<LinkedChild>();
+            item.SetPrimaryVersionId(null);
+            item.OwnerId = Guid.Empty;
+            await item.UpdateToRepositoryAsync(
+                ItemUpdateType.MetadataEdit,
+                CancellationToken.None
+                )
+                .ConfigureAwait(false);
+        }
+
+        private void PreserveAlternateVersionLinks(Video version)
+        {
+            version.LocalAlternateVersions = _libraryManager.GetLocalAlternateVersionIds(version)
+                .Select(id => _libraryManager.GetItemById<Video>(id)?.Path)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Cast<string>()
+                .ToArray();
+            version.LinkedAlternateVersions = _libraryManager.GetLinkedAlternateVersions(version)
+                .Select(alternate => new LinkedChild
+                {
+                    ItemId = alternate.Id,
+                    Type = LinkedChildType.LinkedAlternateVersion
+                })
+                .ToArray();
+        }
+
+        private List<Video> GetAllAlternateVersions(IEnumerable<Video> initialVersions)
+        {
+            var versions = new Dictionary<Guid, Video>();
+            var pending = new Queue<Video>(initialVersions);
+
+            while (pending.Count > 0)
+            {
+                var version = pending.Dequeue();
+                if (!versions.TryAdd(version.Id, version))
+                {
+                    continue;
+                }
+
+                foreach (var alternateId in _libraryManager.GetLocalAlternateVersionIds(version))
+                {
+                    if (_libraryManager.GetItemById<Video>(alternateId) is Video alternate)
+                    {
+                        pending.Enqueue(alternate);
+                    }
+                }
+
+                foreach (var alternate in _libraryManager.GetLinkedAlternateVersions(version))
+                {
+                    pending.Enqueue(alternate);
+                }
+            }
+
+            return versions.Values.ToList();
         }
 
         private bool IsEligible(BaseItem item)
