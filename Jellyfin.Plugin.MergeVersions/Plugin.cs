@@ -21,12 +21,12 @@ namespace Jellyfin.Plugin.MergeVersions
             Instance = this;
         }
 
-        public override string Name => "Merge Versions by BBM (Beta)";
+        public override string Name => "Merge Versions (Beta)";
 
         public static Plugin Instance { get; private set; }
 
         public override string Description
-            => "Merge Versions by BBM (Beta)";
+            => "Merge Versions (Beta)";
 
         public PluginConfiguration PluginConfiguration => Configuration;
 
@@ -39,7 +39,7 @@ namespace Jellyfin.Plugin.MergeVersions
             {
                 new PluginPageInfo
                 {
-                    Name = "Merge Versions by BBM (Beta)",
+                    Name = "Merge Versions (Beta)",
                     EmbeddedResourcePath = GetType().Namespace + ".Configuration.configurationpage.html"
                 }
             };
