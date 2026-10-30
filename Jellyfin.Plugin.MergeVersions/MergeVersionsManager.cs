@@ -92,17 +92,12 @@ namespace Jellyfin.Plugin.MergeVersions
                                                      !episode.LinkedAlternateVersions.Any()))
                 .ToList();
 
-            _logger.LogInformation(
-                "Found {EpisodeCount} episodes and {DuplicateGroupCount} duplicate episode groups",
-                episodes.Count,
-                duplicateEpisodes.Count);
-
             var current = 0;
             foreach (var episodeGroup in duplicateEpisodes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var first = episodeGroup.First();
-                _logger.LogInformation("Merging {Name} ({Year})", first.Name, first.ProductionYear);
+                _logger.LogInformation($"Merging {first.SeriesName}: S{first.ParentIndexNumber} E{first.IndexNumber} - {first.Name} ({first.ProductionYear})");
                 await _videoVersions.MergeAsync(episodeGroup.Select(e => e.Id).ToArray(), user, cancellationToken).ConfigureAwait(false);
                 progress?.Report(++current / (double)duplicateEpisodes.Count * 100);
             }
