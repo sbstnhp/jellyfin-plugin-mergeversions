@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.MergeVersions.ScheduledTasks
 
         public async Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            _logger.LogInformation("Starting plugin, Merging Movies");
+            _logger.LogInformation("Merging Movies...");
             await _mergeVersionsManager.MergeMoviesAsync(progress, cancellationToken: cancellationToken);
             _logger.LogInformation("All movies merged");
         }
@@ -68,7 +68,7 @@ namespace Jellyfin.Plugin.MergeVersions.ScheduledTasks
 
         public async Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            _logger.LogInformation("Starting plugin, Merging Episodes");
+            _logger.LogInformation("Merging Episodes...");
             await _mergeVersionsManager.MergeEpisodesAsync(progress, cancellationToken: cancellationToken);
             _logger.LogInformation("Merging Episodes task finished");
             return;

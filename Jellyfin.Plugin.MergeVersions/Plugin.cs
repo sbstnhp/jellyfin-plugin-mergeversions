@@ -16,16 +16,16 @@ namespace Jellyfin.Plugin.MergeVersions
             Instance = this;
         }
 
-        public override string Name => "Merge Versions";
+        public override string Name => "Merge Versions (Beta)";
 
         public static Plugin Instance { get; private set; }
 
         public override string Description
-            => "Merge Versions";
+            => "Merge Versions (Beta)";
 
         public PluginConfiguration PluginConfiguration => Configuration;
 
-        private readonly Guid _id = new Guid("f21bbed8-3a97-4d8b-88b2-48aaa65427cb");
+        private readonly Guid _id = new Guid("bba04227-c153-41f2-9ea2-83ed646d2da4");
         public override Guid Id => _id;
 
         public IEnumerable<PluginPageInfo> GetPages()
@@ -34,7 +34,7 @@ namespace Jellyfin.Plugin.MergeVersions
             {
                 new PluginPageInfo
                 {
-                    Name = "Merge Versions",
+                    Name = "Merge Versions (Beta)",
                     EmbeddedResourcePath = GetType().Namespace + ".Configuration.configurationpage.html"
                 }
             };
