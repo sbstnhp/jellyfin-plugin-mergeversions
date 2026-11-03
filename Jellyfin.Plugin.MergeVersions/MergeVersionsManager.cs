@@ -160,6 +160,11 @@ namespace Jellyfin.Plugin.MergeVersions
 
         private bool IsEligible(BaseItem item)
         {
+            if (item.DateLastRefreshed <= DateTime.MinValue)
+            {
+                return false;
+            }
+
             if (IsInInactiveLibrary(item) || IsInExcludedLibrary(item))
             {
                 return false;
@@ -194,6 +199,7 @@ namespace Jellyfin.Plugin.MergeVersions
                 .Any(libPath => string.Equals(libPath, parentPath, StringComparison.OrdinalIgnoreCase) ||
                                 _fileSystem.ContainsSubPath(libPath, parentPath));
         }
+        
         private void OnTimerElapsed() { }
 
         public void Dispose()
