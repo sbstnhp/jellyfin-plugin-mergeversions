@@ -86,7 +86,7 @@ namespace Jellyfin.Plugin.MergeVersions
 
             var episodes = GetEpisodesFromLibrary();
             var duplicateEpisodes = episodes
-                .GroupBy(GetEpisodeMergeKey, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => x.ProviderIds["Tvdb"])
                 .Where(group => group.Count() > 1 &&
                                 group.Any(episode => episode.PrimaryVersionId == null &&
                                                      !episode.LinkedAlternateVersions.Any()))
@@ -153,27 +153,9 @@ namespace Jellyfin.Plugin.MergeVersions
                     }
                 )
                 .Select(m => m as Episode)
+                .Where(m => m.ProviderIds.ContainsKey("Tvdb"))
                 .Where(IsEligible)
                 .ToList();
-        }
-
-        private static string GetEpisodeMergeKey(Episode episode)
-        {
-            if (episode.ParentIndexNumber.HasValue && episode.IndexNumber.HasValue)
-            {
-                return $"number:{episode.SeriesName}:{episode.ParentIndexNumber}:{episode.IndexNumber}:{episode.IndexNumberEnd}";
-            }
-
-            foreach (var provider in new[] { "Tvdb", "Tmdb", "Imdb" })
-            {
-                if (episode.ProviderIds.TryGetValue(provider, out var providerId)
-                    && !string.IsNullOrWhiteSpace(providerId))
-                {
-                    return $"provider:{episode.SeriesName}:{provider}:{providerId}";
-                }
-            }
-
-            return $"title:{episode.SeriesName}:{episode.SeasonName}:{episode.Name}:{episode.ProductionYear}";
         }
 
         private bool IsEligible(BaseItem item)
